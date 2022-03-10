@@ -1,0 +1,1308 @@
+---
+title: "Effectiveness of pembrolizumab in patients with urothelial carcinoma receiving proton pump inhibitors"
+output: 
+  word_document: 
+    reference_docx: "~/OneDrive/research data/R/word_template.docx"
+bibliography: references.bib
+csl: urologic-oncology-seminars-and-original-investigations
+---
+
+### Authors
+
+Wataru Fukuokaya^1^, Takahiro Kimura^1^, Kazumasa Komura^2^, Taizo Uchimoto^2^, Kazuki Nishimura^2^, Takafumi Yanagisawa^1^, Yu Imai^1^, Kosuke Iwatani^1^, Kagenori Ito^1^, Fumihiko Urabe^1^, Shunsuke Tsuzuki^1^, Shoji Kimura^1^, Naoki Terada^3^, Shoichiro Mukai^3^, Yu Oyama^4^, Hirokazu Abe^5^, Toshiyuki Kamoto^3^, Haruhito Azuma^2^, Jun Miki^1^, and Shin Egawa^1^
+
+### Institutions
+
+1.  Department of Urology, The Jikei University School of Medicine; 3-25-8 Nishi-shimbashi, Minato-ku, Tokyo, Japan, 105-8461; +81-3-3433-1111
+2.  Department of Urology, Osaka Medical and Pharmaceutical University, 2-7 Daigakumachi, Takatsuki, Osaka, Japan, 569-8686; +81-726-83-1221
+3.  Department of Urology, Faculty of Medicine, University of Miyazaki, 5200 Kiyotakecho Kihara, Miyazaki-city, Miyazaki, 889-1692; +81-985-85-9090
+4.  Department of Medical Oncology, Kameda Medical Center; 929 Higashi-cho, Kamogawa City, Chiba, Japan, 296-8602; +81-4-7092-2211
+5.  Department of Urology, Kameda Medical Center; 929 Higashi-cho, Kamogawa City, Chiba, Japan, 296-8602; +81-4-7092-2211
+
+### Corresponding authors
+
+Takahiro Kimura, M.D., Ph.D.; Associate Professor; Department of Urology, The Jikei University School of Medicine; 3-25-8, Nishi-shimbashi, Minato-ku, Tokyo 105-8461, Japan; telephone +81-3-3433-1111; Fax +81-3-3433-1230; e-mail: 
+
+and
+
+Kazumasa Komura, M.D., Ph.D.; Associate Professor; Department of Urology, Osaka Medical and Pharmaceutical University; Daigakumachi 2-7, Takatsuki City 569-8686, Osaka, Japan; telephone +81-726-83-1221; Fax +81-6-6879-3453; e-mail: 
+
+```{r akm_rmst_abs, include = FALSE}
+# IPW-weighted restricted mean survival time analysis
+akm_rmst_abs <- function(time, status, group, weight = NULL, tau = NULL, alpha = .05, 
+                         xaxismin = 0, xaxismax=max(time)){
+  if(sum(time<0)>0){print("Error: times must be positive.")
+  }else{
+    if(sum(weight<=0)>0){print("Error: weights must be greater than 0.")
+    }else{
+      if(sum(status!=0 & status!=1)>0){print("Error: status must be a vector of 0s and/or 1s.")
+      }else{
+        
+        if(is.null(weight)){weight <- rep(1, length(time))}	
+        data <- data.frame(time, status, group, weight)
+        data <- data[!is.na(data$group) & !is.na(data$time),]
+        data <- data[order(group),] 
+        
+        #--- If tau not specified, use minimum tau from all groups ---
+        j=length(unique(data$group))
+        
+        if(is.null(tau)){
+          taui = rep(999, j)
+          for (i in (1:j)){
+            groupval <- (levels(data$group)[i])
+            dat_group <- data[which(data$group==(groupval)),]
+            taui[i] <- max(dat_group$time[dat_group$status==1])
+          }
+          tau <- min(taui)
+        }
+        
+        #--- Calculate AKM RMST in each group ---
+        rmst <- rep(999, length(1:j))
+        groupval <- rep(999, length(1:j))
+        rmst_var <- rep(999, length(1:j))
+        rmst_se <- rep(999, length(1:j))
+        
+        for (i in 1:j){
+          groupval[i] <- (levels(data$group)[i])
+          dat_group <- data[which(data$group==(groupval[i])),]
+          
+          #--- AKM ---
+          # Based on 'adjusted.KM' function from {IPWsurvival} package
+          # Author: F. Le Borgne and Y. Foucher
+          tj <- c(0,sort(unique(dat_group$time[dat_group$status==1])))
+          dj <- sapply(tj, function(x){sum(dat_group$weight[dat_group$time==x & dat_group$status==1])})
+          yj <- sapply(tj, function(x){sum(dat_group$weight[dat_group$time>=x])})
+          st <- cumprod(1-(dj/yj))
+          m <- sapply(tj, function(x){sum((dat_group$weight[dat_group$time>=x])^2)})
+          mj <- ((yj^2)/m)
+          #ft <- data.frame(time=tj, n_risk=yj, n_event=dj, survival=st, variable=i, m=mj)
+          ft <- data.frame(tj, yj, dj, st, i, mj)
+          
+          #--- RMST ---
+          # Based on 'rmst1 function' from {survRM2} package
+          # Author: Hajime Uno, Lu Tian, Angel Cronin, Chakib Battioui, Miki Horiguchi
+          rtime <- ft$tj<=tau
+          tj_r <- sort(c(ft$tj[rtime],tau))
+          st_r <- ft$st[rtime]
+          yj_r <- ft$yj[rtime]
+          dj_r <- ft$dj[rtime]
+          time_diff <- diff(c(0, tj_r))
+          areas <- time_diff * c(1, st_r)
+          rmst[i] <- sum(areas)
+          
+          #--- Variance ---
+          mj_r <- ft$mj[rtime]
+          var_r <- ifelse((yj_r-dj_r)==0, 0, dj_r /(mj_r *(yj_r - dj_r)))
+          #var_r <- ifelse((yj_r-dj_r)==0, 0, dj_r /(yj_r *(yj_r - dj_r)))
+          var_r <- c(var_r,0)
+          rmst_var[i] <- sum(cumsum(rev(areas[-1]))^2 * rev(var_r)[-1])
+          rmst_se[i] <- sqrt(rmst_var[i])
+        }
+      }
+    }
+  }
+  
+  #--- Compare RMST between groups and compile output---
+  results <- data.frame(groupval,rmst,rmst_var,rmst_se,tau)
+  pwc <- ((j^2)-j)/2   #number of pairwise comparisons
+  
+  label_diff <- rep(999,(pwc))
+  rmst_diff <- rep(999,(pwc))
+  rmst_diff_se <- rep(999,(pwc))
+  rmst_diff_low <- rep(999,(pwc))
+  rmst_diff_upp <- rep(999,(pwc))
+  rmst_diff_pval <- rep(999,(pwc))
+  
+  output_diff <- data.frame(label_diff,rmst_diff,rmst_diff_se,rmst_diff_low,rmst_diff_upp,rmst_diff_pval)
+  l <- 1
+  
+  for (i in 1:(j-1)){
+    for (j in (i+1):j){
+      # Based on 'rmst2 function' from {survRM2} package
+      # Author: Hajime Uno, Lu Tian, Angel Cronin, Chakib Battioui, Miki Horiguchi
+      
+      #--- RMST Difference ---
+      output_diff[l,]$label_diff <- paste('Groups',results[j,]$groupval,'vs.',results[i,]$groupval,' ')
+      output_diff[l,]$rmst_diff <- (results[j,]$rmst - results[i,]$rmst)
+      output_diff[l,]$rmst_diff_se <- sqrt(results[j,]$rmst_var + results[i,]$rmst_var)
+      output_diff[l,]$rmst_diff_low <- output_diff[l,]$rmst_diff - qnorm(1-alpha/2)*output_diff[l,]$rmst_diff_se
+      output_diff[l,]$rmst_diff_upp <- output_diff[l,]$rmst_diff + qnorm(1-alpha/2)*output_diff[l,]$rmst_diff_se
+      output_diff[l,]$rmst_diff_pval <- 2*(1-pnorm(abs(output_diff[l,]$rmst_diff)/output_diff[l,]$rmst_diff_se))
+      
+      l <- l+1 #move to next row
+    }
+  }
+  
+  colnames(results) <- c("Group", "RMST", "Var", "SE", "Tau")
+  rownames(results) <- c(paste("Group", results$Group,' '))
+  print(round(results[c(2,4)],2))
+}
+```
+
+```{r akm_rmst_diff, include = FALSE}
+akm_rmst_diff <- function(time, status, group, weight = NULL, tau = NULL, alpha = .05, 
+                          xaxismin = 0, xaxismax=max(time)){
+  if(sum(time<0)>0){print("Error: times must be positive.")
+  }else{
+    if(sum(weight<=0)>0){print("Error: weights must be greater than 0.")
+    }else{
+      if(sum(status!=0 & status!=1)>0){print("Error: status must be a vector of 0s and/or 1s.")
+      }else{
+        
+        if(is.null(weight)){weight <- rep(1, length(time))}	
+        data <- data.frame(time, status, group, weight)
+        data <- data[!is.na(data$group) & !is.na(data$time),]
+        data <- data[order(group),] 
+        
+        #--- If tau not specified, use minimum tau from all groups ---
+        j=length(unique(data$group))
+        
+        if(is.null(tau)){
+          taui = rep(999, j)
+          for (i in (1:j)){
+            groupval <- (levels(data$group)[i])
+            dat_group <- data[which(data$group==(groupval)),]
+            taui[i] <- max(dat_group$time[dat_group$status==1])
+          }
+          tau <- min(taui)
+        }
+        
+        #--- Calculate AKM RMST in each group ---
+        rmst <- rep(999, length(1:j))
+        groupval <- rep(999, length(1:j))
+        rmst_var <- rep(999, length(1:j))
+        rmst_se <- rep(999, length(1:j))
+        
+        for (i in 1:j){
+          groupval[i] <- (levels(data$group)[i])
+          dat_group <- data[which(data$group==(groupval[i])),]
+          
+          #--- AKM ---
+          # Based on 'adjusted.KM' function from {IPWsurvival} package
+          # Author: F. Le Borgne and Y. Foucher
+          tj <- c(0,sort(unique(dat_group$time[dat_group$status==1])))
+          dj <- sapply(tj, function(x){sum(dat_group$weight[dat_group$time==x & dat_group$status==1])})
+          yj <- sapply(tj, function(x){sum(dat_group$weight[dat_group$time>=x])})
+          st <- cumprod(1-(dj/yj))
+          m <- sapply(tj, function(x){sum((dat_group$weight[dat_group$time>=x])^2)})
+          mj <- ((yj^2)/m)
+          #ft <- data.frame(time=tj, n_risk=yj, n_event=dj, survival=st, variable=i, m=mj)
+          ft <- data.frame(tj, yj, dj, st, i, mj)
+          
+          #--- RMST ---
+          # Based on 'rmst1 function' from {survRM2} package
+          # Author: Hajime Uno, Lu Tian, Angel Cronin, Chakib Battioui, Miki Horiguchi
+          rtime <- ft$tj<=tau
+          tj_r <- sort(c(ft$tj[rtime],tau))
+          st_r <- ft$st[rtime]
+          yj_r <- ft$yj[rtime]
+          dj_r <- ft$dj[rtime]
+          time_diff <- diff(c(0, tj_r))
+          areas <- time_diff * c(1, st_r)
+          rmst[i] <- sum(areas)
+          
+          #--- Variance ---
+          mj_r <- ft$mj[rtime]
+          var_r <- ifelse((yj_r-dj_r)==0, 0, dj_r /(mj_r *(yj_r - dj_r)))
+          #var_r <- ifelse((yj_r-dj_r)==0, 0, dj_r /(yj_r *(yj_r - dj_r)))
+          var_r <- c(var_r,0)
+          rmst_var[i] <- sum(cumsum(rev(areas[-1]))^2 * rev(var_r)[-1])
+          rmst_se[i] <- sqrt(rmst_var[i])
+        }
+      }
+    }
+  }
+  
+  #--- Compare RMST between groups and compile output---
+  results <- data.frame(groupval,rmst,rmst_var,rmst_se,tau)
+  pwc <- ((j^2)-j)/2   #number of pairwise comparisons
+  
+  label_diff <- rep(999,(pwc))
+  rmst_diff <- rep(999,(pwc))
+  rmst_diff_se <- rep(999,(pwc))
+  rmst_diff_low <- rep(999,(pwc))
+  rmst_diff_upp <- rep(999,(pwc))
+  rmst_diff_pval <- rep(999,(pwc))
+  
+  output_diff <- data.frame(label_diff,rmst_diff,rmst_diff_se,rmst_diff_low,rmst_diff_upp,rmst_diff_pval)
+  l <- 1
+  
+  for (i in 1:(j-1)){
+    for (j in (i+1):j){
+      # Based on 'rmst2 function' from {survRM2} package
+      # Author: Hajime Uno, Lu Tian, Angel Cronin, Chakib Battioui, Miki Horiguchi
+      
+      #--- RMST Difference ---
+      output_diff[l,]$label_diff <- paste('Groups',results[j,]$groupval,'vs.',results[i,]$groupval,' ')
+      output_diff[l,]$rmst_diff <- (results[j,]$rmst - results[i,]$rmst)
+      output_diff[l,]$rmst_diff_se <- sqrt(results[j,]$rmst_var + results[i,]$rmst_var)
+      output_diff[l,]$rmst_diff_low <- output_diff[l,]$rmst_diff - qnorm(1-alpha/2)*output_diff[l,]$rmst_diff_se
+      output_diff[l,]$rmst_diff_upp <- output_diff[l,]$rmst_diff + qnorm(1-alpha/2)*output_diff[l,]$rmst_diff_se
+      output_diff[l,]$rmst_diff_pval <- 2*(1-pnorm(abs(output_diff[l,]$rmst_diff)/output_diff[l,]$rmst_diff_se))
+      
+      l <- l+1 #move to next row
+    }
+  }
+  
+  colnames(output_diff) <- c("Groups", "Est.", "SE", "CIL", "CIU", "p")
+  rownames(output_diff) <- c(output_diff$Groups)
+  print(round(output_diff[c(2,3,4,5,6)],3))
+}
+```
+
+```{r Patient data, include = FALSE}
+d <- readxl::read_excel("") # import data from excel
+
+Packages <- c("tidyverse", "lubridate", "survival", "gtsummary", "magrittr", "viridis", "survey", "jskm", "survRM2", "survminer", "nph",
+              "WeightIt", "cobalt", "ggpubr")
+lapply(Packages, library, character.only = TRUE)
+
+# DATA SELECTION AND CREATE BASESLINE DATA
+d1 <- d %>% filter(Histology == "Urothelial carcinoma") # remove non-UC
+d2 <- d1 %>% filter(Platinum == "Cisplatin" | Platinum == "Carboplatin" | Platinum == "Nedaplatin") # select patients received platinum-based chemotherapy
+d_fixed <- d2 %>% drop_na(Best.Response.iRECIST) # remove patients without treatment response data
+
+# DATA PROCESSING
+# FORMAT VARIABLES
+d_fixed = d_fixed %>% mutate(
+  ECOG.Score = as.factor(case_when(ECOG.PS == 0 ~ 0, TRUE ~ 1)),
+  Hb.Score = as.factor(case_when(Hb.Baseline <= 10 ~ 1, TRUE ~ 0)),
+  Liver.Score = as.factor(case_when(Liver == "Yes" ~ 1, TRUE ~ 0)),
+  bmi = Body.Weight / Body.Height / Body.Height * 10000,
+  NLR.Baseline = Neu.Baseline / Lym.Baseline,
+  logNLR = log(NLR.Baseline),
+  logPLT = log(PLT.Baseline),
+  logLDH = log(LDH.Baseline),
+  PPI.Concurrent.Binary = as.factor(case_when(PPI.Concurrent == "Yes" ~ 1, TRUE ~ 0)),
+  Acid.Blocker = case_when(PPI.Detail == "vonoprazan" ~ "P-CAB", is.na(PPI.Detail) ~ "None", TRUE ~ "PPI")) 
+
+d_fixed = d_fixed %>% mutate(
+  Bellmunt.Score = as.numeric(ECOG.Score) + as.numeric(Hb.Score) + as.numeric(Liver.Score),
+  Bellmunt.Factor = case_when(Bellmunt.Score == 0 ~ "Risk 0", 
+                              Bellmunt.Score == 1 ~ "Risk 1", 
+                              Bellmunt.Score == 2 ~ "Risk 2", 
+                              Bellmunt.Score == 3 ~ "Risk 3"), 
+  Visceral = case_when(Metastasis.Category == "LN metastasis" ~ "Lymph node only", TRUE ~ "Visceral disease"),
+  age_cat = as.factor(case_when(Age >= median(Age) ~ 1, TRUE ~ 0)),
+  sex_cat = as.factor(case_when(Gender == "Female" ~ 1, TRUE ~ 0)),
+  bmi_cat = as.factor(case_when(bmi >= median(bmi) ~ 1, TRUE ~ 0)),
+  nlr_cat = as.factor(case_when(logNLR >= median(logNLR) ~ 1, TRUE ~ 0)),
+  hb_cat = as.factor(case_when(Hb.Baseline >= median(Hb.Baseline) ~ 1, TRUE ~ 0)),
+  plt_cat = as.factor(case_when(logPLT >= median(logPLT) ~ 1, TRUE ~ 0)),
+  ldh_cat = as.factor(case_when(logLDH >= median(logLDH) ~ 1, TRUE ~ 0)),
+  smoking_cat = as.factor(case_when(Smoking == "Yes" ~ 1, TRUE ~ 0)),
+  prim_cat = as.factor(case_when(Primary.Location == "Upper tract" ~ 1, TRUE ~ 0)),
+  met_cat = as.factor(case_when(Metastasis.Category == "LN metastasis" ~ 0,
+                                Metastasis.Category == "Visceral metastasis" ~ 1, 
+                                TRUE ~ 2)),
+  pain_cat = as.factor(case_when(Analgesics.Concurrent == "Yes" ~ 1, TRUE ~ 0)),
+  ab_cat = as.factor(case_when(Antibiotics.Concurrent == "Yes" ~ 1, TRUE ~ 0)), 
+  ppi_cat = as.factor(case_when(PPI.Concurrent == "Yes" ~ 1, TRUE ~ 0)), 
+  gc_cat = as.factor(case_when(Glucocorticoid.Concurrent == "Yes" ~ 1, TRUE ~ 0)),
+  surgery_cat = as.factor(case_when(Radical.Surgery == "Yes" ~ 1, TRUE ~ 0)),
+  orchemo_cat = as.factor(case_when(Objective.Response.Chemotherapy == "Yes" ~ 1, TRUE ~ 0)),
+  trae_binary = as.factor(case_when(irAE == "Yes" ~ 1, TRUE ~ 0)), 
+  PPI.duration = as.factor(case_when(PPI.Concurrent == "No" ~ 0,
+                                     (PPI.Concurrent == "Yes" & PPI.90d == "No" & PPI.12m == "No") ~ 1,
+                                     (PPI.Concurrent == "Yes" & PPI.90d == "Yes" & PPI.12m == "No") ~ 2,
+                                     (PPI.Concurrent == "Yes" & PPI.90d == "Yes" & PPI.12m == "Yes") ~ 3)),
+  analgesic.nonopioid = as.factor(case_when(
+    Opioid.Concurrent == "No" & Analgesics.Concurrent == "Yes" ~ "Yes",
+    TRUE ~ "No"
+  )),
+  opioid.alone = as.factor(case_when(
+    Opioid.Concurrent == "Yes" & Analgesics.Concurrent == "No" ~ "Yes",
+    TRUE ~ "No"
+  )),
+  analgesic.group = as.factor(case_when(
+    Analgesics.Concurrent == "No" & Opioid.Concurrent == "No" ~ "None",
+    Analgesics.Concurrent == "No" & Opioid.Concurrent == "Yes" ~ "Opioid only",
+    TRUE ~ "Other analgesic"
+  ))
+)
+
+# FORMAT EVENT DATE DATA
+Date.Start <- as.Date(d_fixed$Day.Start) # convert column to date class
+Date.Progression <- as.Date(d_fixed$Day.Progression) # convert column to date class
+Date.Progression.iRECIST <- as.Date(d_fixed$Day.Progression.iRECIST) # convert column to date class
+Date.FirstResponse <- as.Date(d_fixed$Day.FirstExam) # convert column to date class
+Date.BestResponse <- as.Date(d_fixed$Day.BestResponse) # convert column to date class
+Date.LastAdministration <- as.Date(d_fixed$Day.LastAdministration) # convert column to date class
+Date.LastVisit <- as.Date(d_fixed$Day.LastVisit) # convert column to date class
+Date.Adverse.Event <- as.Date(d_fixed$Day.Adverse.Event) # convert column to date class
+
+# CALCULATE TIME-TO-EVENT DATA
+# define interval
+FollowUp <- Date.Start %--% Date.LastVisit # follow-up period
+TimeToProgression <- Date.Start %--% Date.Progression # time-to-progression
+TimeToProgression.iRECIST <- Date.Start %--% Date.Progression.iRECIST # time-to-progression
+TimeToDiscontinuation <- Date.Start %--% Date.LastAdministration # time-to-treatment discontinuation 
+TimeToBestResponse <- Date.Start %--% Date.BestResponse # time-to-best response
+TimeToFirstResponse <- Date.Start %--% Date.FirstResponse # time-to-best response
+TimeToIRAE <- Date.Start %--% Date.Adverse.Event # time-to-irAE
+Treatment.Discont.RECIST.int <- Date.LastAdministration %--% Date.Progression # time to discontinuation from RECIST-defined progression
+Treatment.Discont.iRECIST.int <- Date.LastAdministration %--% Date.Progression.iRECIST # time to discontinuation from iRECIST-defined progression
+
+# calculate time length and put into data.frame
+d_fixed$TTP_withNA <- lubridate::time_length(TimeToProgression, unit = "month") # no progression = NA
+d_fixed$TTP_withNA.iRECIST <- lubridate::time_length(TimeToProgression.iRECIST, unit = "month") # no progression = NA
+d_fixed$FollowUp <- lubridate::time_length(FollowUp, unit = "month") 
+d_fixed$TimeToBestResponse <- lubridate::time_length(TimeToBestResponse, unit = "month")
+d_fixed$TimeToFirstResponse <- lubridate::time_length(TimeToFirstResponse, unit = "month") 
+d_fixed$TimeToIRAE <- lubridate::time_length(TimeToIRAE, unit = "month")
+d_fixed$TimeToDiscont <- lubridate::time_length(TimeToDiscontinuation, unit = "month") 
+d_fixed$Treatment.Discont.RECIST.leng <- lubridate::time_length(Treatment.Discont.RECIST.int, unit = "month")
+d_fixed$Treatment.Discont.iRECIST.leng <- lubridate::time_length(Treatment.Discont.iRECIST.int, unit = "month")
+
+d_fixed = d_fixed %>% mutate(
+  TimeToProgression = case_when(is.na(TTP_withNA) ~ FollowUp, TRUE ~ TTP_withNA), # NA -> Follow-up period
+  TimeToProgression.iRECIST = case_when(is.na(TTP_withNA.iRECIST) ~ FollowUp, TRUE ~ TTP_withNA.iRECIST), # NA -> Follow-up period
+  TimeToIRAE = case_when(is.na(TimeToIRAE) ~ FollowUp, TRUE ~ TimeToIRAE), # NA -> Follow-up period
+  TimeToDiscont = case_when(is.na(TimeToDiscont) ~ FollowUp, TRUE ~ TimeToDiscont), # NA -> Follow-up period
+  Progression.Binary = case_when(Progression == "Yes" ~ 1, Progression == "No" ~ 0),
+  Progression.iRECIST.Binary = case_when(Progression.iRECIST == "Yes" ~ 1, Progression.iRECIST == "No" ~ 0),
+  Treatment.Discont.RECIST = case_when(Treatment.Discont.RECIST.leng <= 0.75 ~ "Yes", TRUE ~ "No"),
+  Treatment.Discont.iRECIST = case_when(Treatment.Discont.iRECIST.leng <= 0.75 ~ "Yes", TRUE ~ "No"),
+  Deceased.Binary = case_when(Deceased == "Yes" ~ 1, Deceased == "No" ~ 0)) # convert event data into binary
+
+# interval data -> numerical data
+d_fixed$TimeToProgression <- as.numeric(d_fixed$TimeToProgression) 
+d_fixed$TimeToProgression.iRECIST <- as.numeric(d_fixed$TimeToProgression.iRECIST) 
+d_fixed$TimeToIRAE <- as.numeric(d_fixed$TimeToIRAE) 
+d_fixed$TimeToBestResponse <- as.numeric(d_fixed$TimeToBestResponse) 
+d_fixed$TimeToFirstResponse <- as.numeric(d_fixed$TimeToFirstResponse) 
+d_fixed$FollowUp <- as.numeric(d_fixed$FollowUp) 
+
+d_fixed = d_fixed %>% mutate(
+  Objective.Response = case_when((Best.Response == "CR" | Best.Response == "PR") ~ "Yes", TRUE ~ "No"), # calculate OR = CR + PR
+  Objective.Response.Binary = case_when(Objective.Response == "Yes" ~ 1, TRUE ~ 0),
+  Objective.Response.iRECIST = case_when((Best.Response.iRECIST == "iCPD" | 
+                                            Best.Response.iRECIST == "iUPD" | 
+                                            Best.Response.iRECIST == "iSD") ~ "No", TRUE ~ "Yes"),
+  Objective.Response.iRECIST.withIUPD = case_when((Best.Response.iRECIST == "iCPD" | 
+                                                     Best.Response.iRECIST == "iSD") ~ "No", TRUE ~ "Yes"),
+  Objective.Response.iRECIST.Binary = case_when(Objective.Response.iRECIST == "Yes" ~ 1, TRUE ~ 0),
+  Objective.Response.iRECIST.withIUPD.Binary = case_when(Objective.Response.iRECIST.withIUPD == "Yes" ~ 1, TRUE ~ 0),
+  Reclassification = case_when(Best.Response == "PD" & (Best.Response.iRECIST == "iPR" | 
+                                                          Best.Response.iRECIST == "iSD" | 
+                                                          Best.Response.iRECIST == "iCR") ~ "Yes", TRUE ~ "No"))
+
+d_fixed$Metastasis.Category <- gdata::reorder.factor(d_fixed$Metastasis.Category, 
+                                                     new.order = c("LN metastasis", "Visceral metastasis", "LN and visceral metastasis")) # change order of factor
+d_fixed$Best.Response <- gdata::reorder.factor(d_fixed$Best.Response, 
+                                               new.order = c("PD", "SD", "PR", "CR")) # change order of factor
+d_fixed$Best.Response.iRECIST <- gdata::reorder.factor(d_fixed$Best.Response.iRECIST, 
+                                                       new.order = c("iCPD", "iUPD", "iSD", "iPR", "iCR")) # change order of factor
+
+d_fixed$Number.Prior.Chemotherapy <- as.factor(d_fixed$Number.Prior.Chemotherapy)
+```
+
+```{r Propesity score calculation, include = FALSE}
+# survival analysis using propensity score
+logit.ps <- glm(PPI.Concurrent.Binary ~ 
+                  Age + ECOG.Score + Gender + Smoking + bmi + Primary.Location + Metastasis.Category + Liver + 
+                  Number.Prior.Chemotherapy + Platinum + Hb.Baseline + NLR.Baseline + PLT.Baseline + Glucocorticoid.Concurrent +
+                  analgesic.group + Antibiotics.Concurrent, # factors for calculating propensity scores
+                data = d_fixed, family = binomial) # calculate PS using logistic regression model
+
+pscores <- fitted(logit.ps) # pscores = propensity score
+d_fixed <- d_fixed %>% mutate(pscores = pscores)
+
+d_fixed$pscores <- if_else(d_fixed$pscores < 0.01, 0.01, d_fixed$pscores) # trim extreme values for stability
+d_fixed$pscores <- if_else(d_fixed$pscores > 0.99, 0.99, d_fixed$pscores) # now for the high values, retaining the lower trims
+
+d_fixed <-  d_fixed %>% mutate(wgt = case_when(PPI.Concurrent == "Yes" ~ 1/(pscores), TRUE ~ 1 / (1 - pscores))) # Inverse probability of treatment weighting
+```
+
+```{r Kernel density plot, include = FALSE}
+# Kernel density plot of estimated propensity scores
+g <- d_fixed %>% 
+  ggplot(aes(x = pscores, fill = PPI.Concurrent)) +
+  geom_density(alpha = 0.47) + 
+  labs(x = "Estimated probability of receiving PPI",
+       y = "Kernel density",
+       title = "Before weighting") + 
+  theme_minimal() + theme(
+    axis.ticks.y = element_blank(),
+    text = element_text(size = 14)) + 
+  ggsci::scale_fill_aaas() + 
+  ggsci::scale_color_aaas() + 
+  guides(fill = guide_legend(title = "PPI use"))
+
+wg <- d_fixed %>% 
+  ggplot(aes(x = pscores, fill = PPI.Concurrent, weight = wgt)) +
+  geom_density(alpha = 0.47) + 
+  labs(x = "Estimated probability of receiving PPI",
+       y = "Kernel density",
+       title = "After weighting") + 
+  theme_minimal() + theme(
+    axis.ticks.y = element_blank(),
+    text = element_text(size = 14)) + 
+  ggsci::scale_fill_aaas() + 
+  ggsci::scale_color_aaas() + 
+  guides(fill = guide_legend(title = "PPI use"))
+
+merge <- egg::ggarrange(g, wg, ncol = 2)
+```
+
+```{r Table 1 Multivariable logistic regression model, include = FALSE}
+theme_gtsummary_journal(journal = "jama")
+# logistic regression model
+log <- glm(PPI.Concurrent.Binary ~ 
+             Age + ECOG.Score + Gender + Smoking + bmi + Primary.Location + Metastasis.Category + Liver + 
+             Number.Prior.Chemotherapy + Platinum + Hb.Baseline + logNLR + logPLT + Glucocorticoid.Concurrent + 
+             analgesic.group + Antibiotics.Concurrent, # factors for calculating propensity scores
+           data = d_fixed, family = binomial) %>%  # calculate PS using logistic regression model
+  tbl_regression(exponentiate = TRUE, 
+                 label = list(
+                   Age ~ "Age at baseline, year",
+                   Gender ~ "Sex",
+                   Smoking ~ "Smoking history",
+                   ECOG.Score ~ "ECOG performance status",
+                   bmi ~ "Body mass index",
+                   Primary.Location ~ "Primary location of tumor",
+                   Metastasis.Category ~ "Metastatic location",
+                   Liver ~ "Liver metastasis",
+                   Number.Prior.Chemotherapy ~ "Number of previous chemotherapies",
+                   Platinum ~ "Previous platinum therapy",
+                   Hb.Baseline ~ "Baseline hemoglobin concentration",
+                   logNLR ~ "Baseline neutrophil-to-lymphocyte ratio (log-transformed)",
+                   logPLT ~ "Baseline platelet count (log-transformed)",
+                   Glucocorticoid.Concurrent ~ "Concomitant glucocorticoid use",
+                   analgesic.group ~ "Concomitant analgesic use",
+                   Antibiotics.Concurrent ~ "Previous antibiotic use")
+  ) %>% 
+  as_tibble()
+```
+
+```{r Table 2 Patient characteristics, include = FALSE}
+gtsummary::theme_gtsummary_journal(journal = "jama")
+## unweighted patient characteristics ---------------------------
+uwtbl <- d_fixed %>% 
+  select(Age, Smoking, Gender, ECOG.Score, bmi, Primary.Location, Metastasis.Category, Liver, Number.Prior.Chemotherapy, Platinum,
+         Hb.Baseline, NLR.Baseline, PLT.Baseline, Glucocorticoid.Concurrent, analgesic.group, Antibiotics.Concurrent,
+         PPI.Concurrent) %>% 
+  tbl_summary(
+    by = PPI.Concurrent, 
+    label = list(
+      Age ~ "Age at baseline, year",
+      Gender ~ "Sex",
+      Smoking ~ "Smoking history",
+      ECOG.Score ~ "ECOG performance status",
+      bmi ~ "Body mass index",
+      Primary.Location ~ "Primary location of tumor",
+      Metastasis.Category ~ "Metastatic location",
+      Liver ~ "Liver metastasis",
+      Number.Prior.Chemotherapy ~ "Number of previous chemotherapies",
+      Platinum ~ "Previous platinum therapy",
+      Hb.Baseline ~ "Baseline hemoglobin concentration",
+      NLR.Baseline ~ "Baseline neutrophil-to-lymphocyte ratio",
+      PLT.Baseline ~ "Baseline platelet count",
+      Glucocorticoid.Concurrent ~ "Concomitant glucocorticoid use",
+      analgesic.group ~ "Concomitant analgesic use",
+      Antibiotics.Concurrent ~ "Previous antibiotic use"
+    ),
+    type = list(
+      Smoking ~ "categorical",
+      Liver ~ "categorical",
+      Glucocorticoid.Concurrent ~ "categorical",
+      analgesic.group ~ "categorical",
+      Antibiotics.Concurrent ~ "categorical"
+    ),
+    statistic = list(all_continuous() ~ "{mean} ({sd})",
+                     all_categorical() ~ "{n} ({p})"),
+    digits = list(all_continuous() ~ c(1, 1),
+                  all_categorical() ~ c(0, 1))
+  ) %>% 
+  add_difference(test = list(everything() ~ "smd")) %>% 
+  modify_column_hide(columns = ci) %>% 
+  add_overall()
+
+## weighted patient characteristics ---------------------------
+d_wgt <- survey::svydesign(ids = ~ Identifier, weights = ~ wgt, data = d_fixed)
+wtbl <- d_wgt %>% 
+  tbl_svysummary(
+    by = PPI.Concurrent, 
+    include = c(Age, Smoking, Gender, ECOG.Score, bmi, Primary.Location, Metastasis.Category, Liver, Number.Prior.Chemotherapy, Platinum,
+                Hb.Baseline, NLR.Baseline, PLT.Baseline, Glucocorticoid.Concurrent, analgesic.group, Antibiotics.Concurrent),
+    label = list(
+      Age ~ "Age at baseline, year",
+      Gender ~ "Sex",
+      Smoking ~ "Smoking history",
+      ECOG.Score ~ "ECOG performance status",
+      bmi ~ "Body mass index",
+      Primary.Location ~ "Primary location of tumor",
+      Metastasis.Category ~ "Metastatic location",
+      Liver ~ "Liver metastasis",
+      Number.Prior.Chemotherapy ~ "Number of previous chemotherapies",
+      Platinum ~ "Previous platinum therapy",
+      Hb.Baseline ~ "Baseline hemoglobin concentration",
+      NLR.Baseline ~ "Baseline neutrophil-to-lymphocyte ratio",
+      PLT.Baseline ~ "Baseline platelet count",
+      Glucocorticoid.Concurrent ~ "Concomitant glucocorticoid use",
+      analgesic.group ~ "Concomitant analgesic use",
+      Antibiotics.Concurrent ~ "Previous antibiotic use"
+    ),
+    type = list(
+      Smoking ~ "categorical",
+      Liver ~ "categorical",
+      Glucocorticoid.Concurrent ~ "categorical",
+      analgesic.group ~ "categorical",
+      Antibiotics.Concurrent ~ "categorical"
+    ),
+    statistic = list(all_continuous() ~ "{mean} ({sd})",
+                     all_categorical() ~ "{p}"),
+    digits = list(all_continuous() ~ c(1, 1),
+                  all_categorical() ~ c(1, 1))
+  ) %>% 
+  add_difference(test = list(everything() ~ "smd")) %>% 
+  modify_column_hide(columns = ci) %>% 
+  add_overall()
+
+tbl <- tbl_merge(tbls = list(uwtbl, wtbl), 
+                 tab_spanner = c("**Unweighted population**", "**Weighted population**")) %>% as_tibble()
+
+write.csv(tbl, "~/Desktop/result.csv") # export table
+
+ppi_table <- d_fixed %>% select(PPI.Detail) %>% filter(!is.na(PPI.Detail)) %>% 
+  tbl_summary(label = PPI.Detail ~ "Proton pump inhibitor",
+              digits = all_categorical() ~ c(0, 1)) %>% as_tibble()
+
+# analysis for reviewer #1
+tbl_ab <- d_fixed %>% 
+  select(PPI.Concurrent, H2.Concurrent) %>% 
+  tbl_summary(
+    by = PPI.Concurrent,
+    label = H2.Concurrent ~ "Concurrent H2 blocker use",
+    statistic = list(all_continuous() ~ "{mean} ({sd})",
+                     all_categorical() ~ "{n} ({p})"),
+    digits = list(all_continuous() ~ c(1, 1),
+                  all_categorical() ~ c(0, 1))
+  ) %>% 
+  add_p()
+
+# analysis for reviewer #3
+tbl_pltnm <- d_fixed %>% 
+  select(PPI.Concurrent, Platinum) %>% 
+  tbl_summary(
+    by = PPI.Concurrent,
+    label = Platinum ~ "Previous platinum therapy",
+    statistic = list(all_continuous() ~ "{mean} ({sd})",
+                     all_categorical() ~ "{n} ({p})"),
+    digits = list(all_continuous() ~ c(1, 1),
+                  all_categorical() ~ c(0, 1))
+  ) %>% 
+  add_difference(test = list(everything() ~ "smd")) %>% 
+  modify_column_hide(columns = ci)
+
+# analysis for reviewer #4
+tbl_anlgsc <- d_fixed %>% 
+  select(PPI.Concurrent, analgesic.nonopioid) %>% 
+  tbl_summary(
+    by = PPI.Concurrent,
+    label = analgesic.nonopioid ~ "Concomitant Non-opioid analgesic use",
+    statistic = list(all_continuous() ~ "{median} ({iqr})",
+                     all_categorical() ~ "{n} ({p})"),
+    digits = list(all_continuous() ~ c(1, 1),
+                  all_categorical() ~ c(0, 1))
+  ) %>% 
+  add_p()
+
+```
+
+```{r In-line data, include = FALSE}
+all.pt <- d_fixed %>% count() %>% as.numeric()
+ppi.pt <- d_fixed %>% filter(PPI.Concurrent == "Yes") %>% count() %>% as.numeric()
+none.pt <- d_fixed %>% filter(PPI.Concurrent == "No") %>% count() %>% as.numeric()
+perall <- function(var){(var / all.pt * 100) %>% round(digits = 1) %>% as.numeric} # computing patients of interest per all
+perppi <- function(var){(var / ppi.pt * 100) %>% round(digits = 1) %>% as.numeric} 
+pernone <- function(var){(var / none.pt * 100) %>% round(digits = 1) %>% as.numeric} 
+perae <- function(var){(var / num.ae * 100) %>% round(digits = 1) %>% as.numeric}
+hr <- function(var){var %>% str_sub(start = 1, end = 4) %>% as.numeric()}
+ci <- function(var){var %>% str_sub(start = 7, end = 18) %>% as.vector()}
+```
+
+```{r Survival data, include = FALSE}
+# define time-to-event data
+ttp = d_fixed %$% survival::Surv(TimeToProgression.iRECIST, Progression.iRECIST.Binary)
+ttd = d_fixed %$% survival::Surv(FollowUp, Deceased.Binary)
+
+# median follow-up period
+fu <- d_fixed %>% 
+  survfit(ttd ~ 1, data = .) 
+median.fu <- surv_median(fu)[1, 2] %>% round(digits = 1) %>% as.numeric() # from survminer
+lcl.fu <- surv_median(fu)[1, 3] %>% round(digits = 1) %>% as.numeric() # from survminer
+ucl.fu <- surv_median(fu)[1, 4] %>% round(digits = 1) %>% as.numeric() # from survminer
+
+wfu <- d_fixed %>% 
+  survfit(ttd ~ 1, data = ., weights = wgt) 
+median.wfu <- surv_median(wfu)[1, 2] %>% round(digits = 1) %>% as.numeric() # from survminer
+lcl.wfu <- surv_median(wfu)[1, 3] %>% round(digits = 1) %>% as.numeric() # from survminer
+ucl.wfu <- surv_median(wfu)[1, 4] %>% round(digits = 1) %>% as.numeric() # from survminer
+
+# TIME-TO-EVENT ANALYSIS
+OS <- d_fixed %>% survival::survfit(data = ., ttd ~ 1, 
+                                    type = "kaplan-meier", conf.int = 0.95, weight = wgt) 
+uwOS <- d_fixed %>% survival::survfit(data = ., ttd ~ 1, 
+                                      type = "kaplan-meier", conf.int = 0.95) 
+OS # events, median survival time (95% confidence interval)
+median.OS <- summary(OS)$table["median"] %>% round(digits = 1) %>% as.numeric() # events, median survival time (95% CI)
+lcl.OS <- summary(OS)$table["0.95LCL"] %>% round(digits = 1) %>% as.numeric() # lower 95% CI of OS
+ucl.OS <- summary(OS)$table["0.95UCL"] %>% round(digits = 1) %>% as.numeric() # upper 95% CI of OS
+event.OS <- summary(uwOS)$table["events"] %>% round(digits = 0) %>% as.numeric() # number of all-cause mortality
+
+PFS <- d_fixed %>% survival::survfit(data = ., ttp ~ 1, 
+                                     type = "kaplan-meier", conf.int = 0.95, weight = wgt)
+uwPFS <- d_fixed %>% survival::survfit(data = ., ttp ~ 1, 
+                                       type = "kaplan-meier", conf.int = 0.95)
+PFS # events, median survival time (95% confidence interval)
+median.PFS <- summary(PFS)$table["median"] %>% round(digits = 1) %>% as.numeric() # events, median survival time (95% CI)
+lcl.PFS <- summary(PFS)$table["0.95LCL"] %>% round(digits = 1) %>% as.numeric() # lower 95% CI
+ucl.PFS <- summary(PFS)$table["0.95UCL"] %>% round(digits = 1) %>% as.numeric() # upper 95% CI
+event.PFS <- summary(uwPFS)$table["events"] %>% round(digits = 0) %>% as.numeric() # number of all-cause mortality
+
+# progression-free survival
+pfs <- survival::survfit(data = d_fixed, ttp ~ 1, 
+                         type = "kaplan-meier", conf.int = 0.95) # unweighted population
+pfs.all <- survminer::ggsurvplot(pfs, risk.table = TRUE, font.tickslab = 14, font.x = 14, font.y = 14,
+                                 title = "Immune progression-free survival", 
+                                 legend = "none", 
+                                 xlab = "Time from treatment initiation, month", 
+                                 ylab = "Immune progression-free survival probability",
+                                 palette = "jco", size = 0.4, censor.shape = "O", censor.size = 3,
+                                 tables.y.text = FALSE, risk.table.title = "Number at risk",
+                                 ggtheme = theme_classic(), tables.height = 0.17, risk.table.fontsize = 5,
+                                 tables.theme = survminer::theme_cleantable(), conf.int = TRUE, surv.median.line = "hv") 
+
+# overall survival
+os <- survival::survfit(data = d_fixed, ttd ~ 1, 
+                        type = "kaplan-meier", conf.int = 0.95) # unweighted population
+os.all <- survminer::ggsurvplot(os, risk.table = TRUE, font.tickslab = 14, font.x = 14, font.y = 14,
+                                title = "Overall survival", 
+                                legend = "none", 
+                                xlab = "Time from treatment initiation, month", ylab = "Overall survival probability",
+                                palette = "jco", size = 0.4, censor.shape = "O", censor.size = 3,
+                                tables.y.text = FALSE, risk.table.title = "Number at risk",
+                                ggtheme = theme_classic(), tables.height = 0.17, risk.table.fontsize = 5,
+                                tables.theme = survminer::theme_cleantable(), conf.int = TRUE, surv.median.line = "hv") 
+```
+
+```{r Treatment response, include = FALSE}
+pts.or <- d_fixed %>% filter(Objective.Response.iRECIST == "Yes") %>% count() %>% as.numeric()
+typ.res <- d_fixed %>% filter(Pseudoprogression == "No") %>% count() %>% as.numeric()
+atyp.res <- d_fixed %>% filter(Pseudoprogression == "Yes") %>% count() %>% as.numeric()
+
+atyp.ppi <- d_fixed %>% filter(Pseudoprogression == "Yes", PPI.Concurrent == "Yes") %>% count() %>% as.numeric()
+atyp.none <- d_fixed %>% filter(Pseudoprogression == "Yes", PPI.Concurrent == "No") %>% count() %>% as.numeric()
+
+atyp.diff <- fisher.test(d_fixed$PPI.Concurrent, d_fixed$Pseudoprogression)
+atyp.p <- atyp.diff[[1]] %>% round(digits = 2) %>% as.numeric()
+```
+
+```{r Oncological outcome, include = FALSE}
+gtsummary::theme_gtsummary_journal(journal = "jama")
+
+uni.or <- d_fixed %>% 
+  glm(Objective.Response.iRECIST.Binary ~ PPI.Concurrent, weights = wgt, data = .) %>% 
+  tbl_regression(exponentiate = TRUE, 
+                 label = list(PPI.Concurrent ~ "PPI use")) %>% as_tibble()
+uni.or.or <- uni.or[3, 2] %>% as.factor()
+uni.or.p <- uni.or[3, 3] %>% as.numeric()
+
+uni.pfs <- d_fixed %>% 
+  coxph(ttp ~ PPI.Concurrent, weights = wgt, data = .) %>% 
+  tbl_regression(exponentiate = TRUE, 
+                 label = list(PPI.Concurrent ~ "PPI use")) %>% as_tibble()
+uni.pfs.hr <- uni.pfs[3, 2] %>% as.factor()
+uni.pfs.p <- uni.pfs[3, 3] %>% as.numeric()
+
+uni.os <- d_fixed %>% 
+  coxph(ttd ~ PPI.Concurrent, weights = wgt, data = .) %>% 
+  tbl_regression(exponentiate = TRUE, 
+                 label = list(PPI.Concurrent ~ "PPI use")) %>% as_tibble()
+uni.os.hr <- uni.os[3, 2] %>% as.factor()
+uni.os.p <- uni.os[3, 3] %>% as.numeric()
+
+multi.or <- d_fixed %>% 
+  glm(Objective.Response.Binary ~ 
+        Age + ECOG.Score + Gender + Smoking + bmi + Primary.Location + Metastasis.Category + Liver + 
+        Number.Prior.Chemotherapy + Platinum + Hb.Baseline + logNLR + logPLT + Glucocorticoid.Concurrent + 
+        analgesic.group + Antibiotics.Concurrent + PPI.Concurrent, 
+      data = ., weight = wgt, family = binomial) %>%  
+  tbl_regression(exponentiate = TRUE, 
+                 label = list(
+                   Age ~ "Age at baseline, year",
+                   Gender ~ "Sex",
+                   Smoking ~ "Smoking history",
+                   ECOG.Score ~ "ECOG performance status",
+                   bmi ~ "Body mass index",
+                   Primary.Location ~ "Primary location of tumor",
+                   Metastasis.Category ~ "Metastatic location",
+                   Liver ~ "Liver metastasis",
+                   Number.Prior.Chemotherapy ~ "Number of previous chemotherapies",
+                   Platinum ~ "Previous platinum therapy",
+                   Hb.Baseline ~ "Baseline hemoglobin concentration",
+                   logNLR ~ "Baseline neutrophil-to-lymphocyte ratio (log-transformed)",
+                   logPLT ~ "Baseline platelet count (log-transformed)",
+                   Glucocorticoid.Concurrent ~ "Concomitant glucocorticoid use",
+                   analgesic.group ~ "Concomitant analgesic use",
+                   Antibiotics.Concurrent ~ "Previous antibiotic use",
+                   PPI.Concurrent ~ "Concomitant PPI use")
+  ) %>% as_tibble() # objective response
+multi.or.or <- multi.or[43, 2] %>% as.factor()
+multi.or.p <- multi.or[43, 3] %>% as.numeric()
+multi.or.or.ab <- multi.or[40, 2] %>% as.factor()
+multi.or.p.ab <- multi.or[40, 3] %>% as.numeric()
+
+multi.os <- d_fixed %>% 
+  coxph(ttd ~ 
+          Age + ECOG.Score + Gender + Smoking + bmi + Primary.Location + Metastasis.Category + Liver + 
+          Number.Prior.Chemotherapy + Platinum + Hb.Baseline + logNLR + logPLT + Glucocorticoid.Concurrent + 
+          analgesic.group + Antibiotics.Concurrent + PPI.Concurrent, 
+        weight = wgt, data = .) %>% 
+  tbl_regression(exponentiate = TRUE, 
+                 label = list(
+                   Age ~ "Age at baseline, year",
+                   Gender ~ "Sex",
+                   Smoking ~ "Smoking history",
+                   ECOG.Score ~ "ECOG performance status",
+                   bmi ~ "Body mass index",
+                   Primary.Location ~ "Primary location of tumor",
+                   Metastasis.Category ~ "Metastatic location",
+                   Liver ~ "Liver metastasis",
+                   Number.Prior.Chemotherapy ~ "Number of previous chemotherapies",
+                   Platinum ~ "Previous platinum therapy",
+                   Hb.Baseline ~ "Baseline hemoglobin concentration",
+                   logNLR ~ "Baseline neutrophil-to-lymphocyte ratio (log-transformed)",
+                   logPLT ~ "Baseline platelet count (log-transformed)",
+                   Glucocorticoid.Concurrent ~ "Concomitant glucocorticoid use",
+                   analgesic.group ~ "Concomitant analgesic use",
+                   Antibiotics.Concurrent ~ "Previous antibiotic use",
+                   PPI.Concurrent ~ "Concomitant PPI use")
+  ) %>% as_tibble() # overall survival
+multi.os.hr <- multi.os[43, 2] %>% as.factor()
+multi.os.p <- multi.os[43, 3] %>% as.numeric()
+
+multi.pfs <- d_fixed %>% 
+  coxph(ttp ~ 
+          Age + ECOG.Score + Gender + Smoking + bmi + Primary.Location + Metastasis.Category + Liver + 
+          Number.Prior.Chemotherapy + Platinum + Hb.Baseline + logNLR + logPLT + Glucocorticoid.Concurrent + 
+          analgesic.group + Antibiotics.Concurrent + PPI.Concurrent, 
+        weight = wgt, data = .) %>% 
+  tbl_regression(exponentiate = TRUE, 
+                 label = list(
+                   Age ~ "Age at baseline, year",
+                   Gender ~ "Sex",
+                   Smoking ~ "Smoking history",
+                   ECOG.Score ~ "ECOG performance status",
+                   bmi ~ "Body mass index",
+                   Primary.Location ~ "Primary location of tumor",
+                   Metastasis.Category ~ "Metastatic location",
+                   Liver ~ "Liver metastasis",
+                   Number.Prior.Chemotherapy ~ "Number of previous chemotherapies",
+                   Platinum ~ "Previous platinum therapy",
+                   Hb.Baseline ~ "Baseline hemoglobin concentration",
+                   logNLR ~ "Baseline neutrophil-to-lymphocyte ratio (log-transformed)",
+                   logPLT ~ "Baseline platelet count (log-transformed)",
+                   Glucocorticoid.Concurrent ~ "Concomitant glucocorticoid use",
+                   analgesic.group ~ "Concomitant analgesic use",
+                   Antibiotics.Concurrent ~ "Previous antibiotic use",
+                   PPI.Concurrent ~ "Concomitant PPI use")
+  ) %>% as_tibble() # immune progression-free survival
+multi.pfs.hr <- multi.pfs[43, 2] %>% as.factor()
+multi.pfs.p <- multi.pfs[43, 3] %>% as.factor()
+multi.pfs.hr.gc <- multi.pfs[33, 2] %>% as.factor()
+multi.pfs.p.gc <- multi.pfs[33, 3] %>% as.factor()
+
+# subgroup analysis
+age.os <- d_fixed %>% 
+  coxph(ttd ~ PPI.Concurrent*Age, weights = wgt, data = .) %>% 
+  tbl_regression(exponentiate = TRUE, 
+                 label = list(PPI.Concurrent ~ "PPI use", 
+                              Age ~ "Age, year (continuous)")) %>% as_tibble()
+
+sex.os <- d_fixed %>% 
+  coxph(ttd ~ Gender*PPI.Concurrent, weights = wgt, data = .) %>% 
+  tbl_regression(exponentiate = TRUE, 
+                 label = list(PPI.Concurrent ~ "PPI use", 
+                              Gender ~ "Sex")) %>% as_tibble()
+
+ps.os <- d_fixed %>% 
+  coxph(ttd ~ ECOG.Score*PPI.Concurrent, weights = wgt, data = .) %>% 
+  tbl_regression(exponentiate = TRUE, 
+                 label = list(PPI.Concurrent ~ "PPI use", 
+                              ECOG.Score ~ "ECOG performance status")) %>% as_tibble()
+
+smoking.os <- d_fixed %>% 
+  coxph(ttd ~ Smoking*PPI.Concurrent, weights = wgt, data = .) %>% 
+  tbl_regression(exponentiate = TRUE, 
+                 label = list(PPI.Concurrent ~ "PPI use", 
+                              Smoking ~ "Smoking status")) %>% as_tibble()
+
+bmi.os <- d_fixed %>% 
+  coxph(ttd ~ bmi*PPI.Concurrent, weights = wgt, data = .) %>% 
+  tbl_regression(exponentiate = TRUE, 
+                 label = list(PPI.Concurrent ~ "PPI use", 
+                              bmi ~ "Body mass index")) %>% as_tibble()
+
+pri.os <- d_fixed %>% 
+  coxph(ttd ~ Primary.Location*PPI.Concurrent, weights = wgt, data = .) %>% 
+  tbl_regression(exponentiate = TRUE, 
+                 label = list(PPI.Concurrent ~ "PPI use", 
+                              Primary.Location ~ "Primary location of tumor")) %>% as_tibble()
+
+met.os <- d_fixed %>% 
+  coxph(ttd ~ Metastasis.Category*PPI.Concurrent, weights = wgt, data = .) %>% 
+  tbl_regression(exponentiate = TRUE, 
+                 label = list(PPI.Concurrent ~ "PPI use", 
+                              Metastasis.Category ~ "Metastatic location")) %>% as_tibble()
+
+liver.os <- d_fixed %>% 
+  coxph(ttd ~ Liver*PPI.Concurrent, weights = wgt, data = .) %>% 
+  tbl_regression(exponentiate = TRUE, 
+                 label = list(PPI.Concurrent ~ "PPI use", 
+                              Liver ~ "Liver metastasis")) %>% as_tibble()
+
+num.os <- d_fixed %>% 
+  coxph(ttd ~ Number.Prior.Chemotherapy*PPI.Concurrent, weights = wgt, data = .) %>% 
+  tbl_regression(exponentiate = TRUE, 
+                 label = list(PPI.Concurrent ~ "PPI use", 
+                              Number.Prior.Chemotherapy ~ "Number of previous chemotherapy")) %>% as_tibble()
+
+platnm.os <- d_fixed %>% 
+  coxph(ttd ~ Platinum*PPI.Concurrent, weights = wgt, data = .) %>% 
+  tbl_regression(exponentiate = TRUE, 
+                 label = list(PPI.Concurrent ~ "PPI use", 
+                              Platinum ~ "Previous platinum therapy")) %>% as_tibble()
+
+hb.os <- d_fixed %>% 
+  coxph(ttd ~ Hb.Baseline*PPI.Concurrent, weights = wgt, data = .) %>% 
+  tbl_regression(exponentiate = TRUE, 
+                 label = list(PPI.Concurrent ~ "PPI use", 
+                              Hb.Baseline ~ "Hemoglobin concentration")) %>% as_tibble()
+
+nlr.os <- d_fixed %>% 
+  coxph(ttd ~ logNLR*PPI.Concurrent, weights = wgt, data = .) %>% 
+  tbl_regression(exponentiate = TRUE, 
+                 label = list(PPI.Concurrent ~ "PPI use", 
+                              logNLR ~ "Neutrophil-to-lymphocyte ratio (log)")) %>% as_tibble()
+
+plt.os <- d_fixed %>% 
+  coxph(ttd ~ logPLT*PPI.Concurrent, weights = wgt, data = .) %>% 
+  tbl_regression(exponentiate = TRUE, 
+                 label = list(PPI.Concurrent ~ "PPI use", 
+                              logPLT ~ "Platelet count (log)")) %>% as_tibble()
+
+gc.os <- d_fixed %>% 
+  coxph(ttd ~ Glucocorticoid.Concurrent*PPI.Concurrent, weights = wgt, data = .) %>% 
+  tbl_regression(exponentiate = TRUE, 
+                 label = list(PPI.Concurrent ~ "PPI use", 
+                              Glucocorticoid.Concurrent ~ "Concurrent Glucocorticoid use")) %>% as_tibble()
+
+ana.os <- d_fixed %>% 
+  coxph(ttd ~ analgesic.group*PPI.Concurrent, weights = wgt, data = .) %>% 
+  tbl_regression(exponentiate = TRUE, 
+                 label = list(PPI.Concurrent ~ "PPI use", 
+                              analgesic.group ~ "Concurrent analgesic use")) %>% as_tibble()
+
+ab.os <- d_fixed %>% 
+  coxph(ttd ~ Antibiotics.Concurrent*PPI.Concurrent, weights = wgt, data = .) %>% 
+  tbl_regression(exponentiate = TRUE, 
+                 label = list(PPI.Concurrent ~ "PPI use", 
+                              Antibiotics.Concurrent ~ "Previous antibiotic use")) %>% as_tibble()
+
+# For reviewer #4
+multi_os_ab <- d_fixed %>% 
+  coxph(ttd ~ Age + ECOG.Score + Gender + Smoking + bmi + Primary.Location + Metastasis.Category + Liver + 
+          Number.Prior.Chemotherapy + Platinum + Hb.Baseline + logNLR + logPLT + Glucocorticoid.Concurrent + 
+          analgesic.group + Antibiotics.Concurrent + AB, data = .) %>% 
+  tbl_regression(exponentiate = TRUE, 
+                 label = list(
+                   Age ~ "Age at baseline, year",
+                   Gender ~ "Sex",
+                   Smoking ~ "Smoking history",
+                   ECOG.Score ~ "ECOG performance status",
+                   bmi ~ "Body mass index",
+                   Primary.Location ~ "Primary location of tumor",
+                   Metastasis.Category ~ "Metastatic location",
+                   Liver ~ "Liver metastasis",
+                   Number.Prior.Chemotherapy ~ "Number of previous chemotherapies",
+                   Platinum ~ "Previous platinum therapy",
+                   Hb.Baseline ~ "Baseline hemoglobin concentration",
+                   logNLR ~ "Baseline neutrophil-to-lymphocyte ratio (log-transformed)",
+                   logPLT ~ "Baseline platelet count (log-transformed)",
+                   Glucocorticoid.Concurrent ~ "Concurrent glucocorticoid use",
+                   analgesic.group ~ "Concomitant analgesic use",
+                   Antibiotics.Concurrent ~ "Concurrent antibiotic use",
+                   AB ~ "Acid blocker use")
+  ) %>% as_tibble() # overall survival
+multi_os_hr_pcab <- multi_os_ab[43, 2] %>% as.factor()
+multi_os_p_pcab <- multi_os_ab[43, 3] %>% as.numeric()
+multi_os_hr_ppi <- multi_os_ab[44, 2] %>% as.factor()
+multi_os_p_ppi <- multi_os_ab[44, 3] %>% as.numeric()
+
+multi_pfs_ab <- d_fixed %>% 
+  coxph(ttp ~ Age + ECOG.Score + Gender + Smoking + bmi + Primary.Location + Metastasis.Category + Liver + 
+          Number.Prior.Chemotherapy + Platinum + Hb.Baseline + logNLR + logPLT + Glucocorticoid.Concurrent + 
+          analgesic.group + Antibiotics.Concurrent + AB, data = .) %>% 
+  tbl_regression(exponentiate = TRUE, 
+                 label = list(
+                   Age ~ "Age at baseline, year",
+                   Gender ~ "Sex",
+                   Smoking ~ "Smoking history",
+                   ECOG.Score ~ "ECOG performance status",
+                   bmi ~ "Body mass index",
+                   Primary.Location ~ "Primary location of tumor",
+                   Metastasis.Category ~ "Metastatic location",
+                   Liver ~ "Liver metastasis",
+                   Number.Prior.Chemotherapy ~ "Number of previous chemotherapies",
+                   Platinum ~ "Previous platinum therapy",
+                   Hb.Baseline ~ "Baseline hemoglobin concentration",
+                   logNLR ~ "Baseline neutrophil-to-lymphocyte ratio (log-transformed)",
+                   logPLT ~ "Baseline platelet count (log-transformed)",
+                   Glucocorticoid.Concurrent ~ "Concurrent glucocorticoid use",
+                   analgesic.group ~ "Concomitant analgesic use",
+                   Antibiotics.Concurrent ~ "Concurrent antibiotic use",
+                   AB ~ "Acid blocker use")
+  ) %>% as_tibble() # immune progression-free survival
+multi_pfs_hr_pcab <- multi_pfs_ab[43, 2] %>% as.factor()
+multi_pfs_p_pcab <- multi_pfs_ab[43, 3] %>% as.numeric()
+multi_pfs_hr_ppi <- multi_pfs_ab[44, 2] %>% as.factor()
+multi_pfs_p_ppi <- multi_pfs_ab[44, 3] %>% as.numeric()
+```
+
+```{r Stack bar chart for OR, include = FALSE}
+# stacked bar chart for objective response rate
+d_fixed %>% count(Best.Response.iRECIST, PPI.Concurrent) # calculate number of patients according to the responses
+prop.res <- d_fixed %>% 
+  group_by(PPI.Concurrent, Best.Response.iRECIST) %>% 
+  summarise(n = n()) %>% 
+  mutate(percent = paste0(round(n / sum(n) * 100, 1), '%'), 
+         freq = n / sum(n) * 100, 
+         pos = cumsum(freq) - 0.5 * freq)
+
+prop.res$Response <- factor(prop.res$Best.Response.iRECIST, levels = c("iCR", "iPR", "iSD", "iUPD", "iCPD")) # change order
+
+bar <- ggplot2::ggplot() + 
+  ggplot2::theme_classic(base_size = 15) +
+  ggplot2::geom_bar(ggplot2::aes(y = freq, x = PPI.Concurrent, fill = Response), data = prop.res, stat = "identity") + 
+  scale_fill_viridis(discrete = TRUE, option = "G", begin = 0, end = 0.8) + 
+  ggplot2::labs(x = "PPI use", y = "Proportion of patients with the best overall response") + 
+  geom_text(data = prop.res, aes(x = PPI.Concurrent, y = pos, label = percent), size = 4.5, color = "white")
+bar # show stacked bar chart
+
+ibor.fisher <- fisher.test(d_fixed$PPI.Concurrent, d_fixed$Objective.Response.iRECIST)
+ibor.fisher.p <- ibor.fisher[["p.value"]] %>% round(digits = 2) %>% as.numeric()
+```
+
+```{r Stratified survival data, include = FALSE}
+gtsummary::theme_gtsummary_journal(journal = "jama")
+# survival characteristics
+# non-users
+os.none <- d_fixed %>% filter(PPI.Concurrent == "No") %>% 
+  survival::survfit(data = ., Surv(FollowUp, Deceased.Binary) ~ 1, 
+                    type = "kaplan-meier", conf.int = 0.95, weight = wgt) 
+os.none # events, median survival time (95% confidence interval)
+median.os.none <- summary(os.none)$table["median"] %>% round(digits = 1) %>% as.numeric() 
+lcl.os.none <- summary(os.none)$table["0.95LCL"] %>% round(digits = 1) %>% as.numeric() 
+ucl.os.none <- summary(os.none)$table["0.95UCL"] %>% round(digits = 1) %>% as.numeric() 
+event.os.none <- summary(os.none)$table["events"] %>% round(digits = 0) %>% as.numeric() 
+
+pfs.none <- d_fixed %>% filter(PPI.Concurrent == "No") %>% 
+  survival::survfit(data = ., Surv(TimeToProgression.iRECIST, Progression.iRECIST.Binary) ~ 1, 
+                    type = "kaplan-meier", conf.int = 0.95, weight = wgt) 
+pfs.none # events, median survival time (95% confidence interval)
+median.pfs.none <- summary(pfs.none)$table["median"] %>% round(digits = 1) %>% as.numeric() 
+lcl.pfs.none <- summary(pfs.none)$table["0.95LCL"] %>% round(digits = 1) %>% as.numeric() 
+ucl.pfs.none <- summary(pfs.none)$table["0.95UCL"] %>% round(digits = 1) %>% as.numeric() 
+event.pfs.none <- summary(pfs.none)$table["events"] %>% round(digits = 0) %>% as.numeric()
+
+# PPI users
+os.ppi <- d_fixed %>% filter(PPI.Concurrent == "Yes") %>% 
+  survival::survfit(data = ., Surv(FollowUp, Deceased.Binary) ~ 1, 
+                    type = "kaplan-meier", conf.int = 0.95, weight = wgt) 
+os.ppi # events, median survival time (95% confidence interval)
+median.os.ppi <- summary(os.ppi)$table["median"] %>% round(digits = 1) %>% as.numeric() 
+lcl.os.ppi <- summary(os.ppi)$table["0.95LCL"] %>% round(digits = 1) %>% as.numeric() 
+ucl.os.ppi <- summary(os.ppi)$table["0.95UCL"] %>% round(digits = 1) %>% as.numeric() 
+event.os.ppi <- summary(os.ppi)$table["events"] %>% round(digits = 0) %>% as.numeric() 
+
+pfs.ppi <- d_fixed %>% filter(PPI.Concurrent == "Yes") %>% 
+  survival::survfit(data = ., Surv(TimeToProgression.iRECIST, Progression.iRECIST.Binary) ~ 1, 
+                    type = "kaplan-meier", conf.int = 0.95, weight = wgt) 
+pfs.ppi # events, median survival time (95% confidence interval)
+median.pfs.ppi <- summary(pfs.ppi)$table["median"] %>% round(digits = 1) %>% as.numeric() 
+lcl.pfs.ppi <- summary(pfs.ppi)$table["0.95LCL"] %>% round(digits = 1) %>% as.numeric() 
+ucl.pfs.ppi <- summary(pfs.ppi)$table["0.95UCL"] %>% round(digits = 1) %>% as.numeric() 
+event.pfs.ppi <- summary(pfs.ppi)$table["events"] %>% round(digits = 0) %>% as.numeric() 
+
+# weighted log rank test
+pval.os <- logrank.test(time = d_fixed$FollowUp, event = d_fixed$Deceased.Binary, 
+                        group = d_fixed$PPI.Concurrent, weights = d_fixed$wgt)
+p.os <- pval.os[[2]][[6]] %>% round(digits = 3) %>% as.numeric()
+
+pval.pfs <- logrank.test(time = d_fixed$TimeToProgression.iRECIST, event = d_fixed$Progression.iRECIST.Binary, 
+                         group = d_fixed$PPI.Concurrent, weights = d_fixed$wgt)
+p.pfs <- pval.pfs[[2]][[6]] %>% round(digits = 3) %>% as.numeric()
+```
+
+```{r Kaplan-Meier plots, include = FALSE, fig.width = 5.3, fig.height = 3, echo = TRUE}
+ttp = d_fixed %$% survival::Surv(TimeToProgression.iRECIST, Progression.iRECIST.Binary)
+ttd = d_fixed %$% survival::Surv(FollowUp, Deceased.Binary)
+# immune progression-free survival
+pfs.surv <- survival::survfit(data = d_fixed, ttp ~ PPI.Concurrent, weight = wgt)
+pfs.km <- survminer::ggsurvplot(pfs.surv, 
+                                risk.table = TRUE, font.tickslab = 14, font.x = 14, font.y = 14,
+                                title = "Immune progression-free survival", 
+                                legend = "top", legend.labs = c("No", "Yes"), 
+                                legend.title = "PPI use", censor = FALSE,
+                                xlab = "Time from treatment initiation, month", 
+                                ylab = "Immune progression-free survival probability",
+                                palette = "aaas", size = 0.6, 
+                                ggtheme = theme_classic(), risk.table.title = "Number at risk",
+                                risk.table.col = "strata",
+                                tables.height = 0.17, risk.table.fontsize = 5,
+                                tables.theme = survminer::theme_cleantable()) 
+
+# for unweighted number at risk
+tbl_pfs_fit <- survival::survfit(data = d_fixed, ttp ~ PPI.Concurrent)
+tbl_pfs <- survminer::ggsurvplot(tbl_pfs_fit, 
+                                 risk.table = TRUE, palette = "aaas",
+                                 ggtheme = theme_classic(), risk.table.title = "Number at risk",
+                                 risk.table.col = "strata",
+                                 tables.height = 0.15, risk.table.fontsize = 4.5,
+                                 tables.theme = survminer::theme_cleantable()) 
+
+pfs.km$table <- tbl_pfs$table + 
+  theme(
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank()
+  )
+
+# overall survival
+os.surv <- survival::survfit(data = d_fixed, ttd ~ PPI.Concurrent, weight = wgt)
+os.km <- survminer::ggsurvplot(os.surv, 
+                               risk.table = TRUE, font.tickslab = 14, font.x = 14, font.y = 14,
+                               title = "Overall survival", 
+                               legend = "top", legend.labs = c("No", "Yes"), 
+                               legend.title = "PPI use", censor = FALSE,
+                               xlab = "Time from treatment initiation, month", 
+                               ylab = "Overall survival probability",
+                               palette = "aaas", size = 0.6, 
+                               ggtheme = theme_classic(), risk.table.title = "Number at risk",
+                               risk.table.col = "strata",
+                               tables.height = 0.17, risk.table.fontsize = 5,
+                               tables.theme = survminer::theme_cleantable()) 
+
+# for unweighted number at risk
+tbl_os_fit <- survival::survfit(data = d_fixed, ttd ~ PPI.Concurrent)
+tbl_os <- survminer::ggsurvplot(tbl_os_fit, 
+                                 risk.table = TRUE, palette = "aaas",
+                                 ggtheme = theme_classic(), risk.table.title = "Number at risk",
+                                 risk.table.col = "strata",
+                                 tables.height = 0.15, risk.table.fontsize = 4.5,
+                                 tables.theme = survminer::theme_cleantable()) 
+
+os.km$table <- tbl_os$table + 
+  theme(
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank()
+  )
+
+merge.km <- 
+  survminer::arrange_ggsurvplots(list(pfs.km, os.km), print = FALSE, 
+                                 nrow = 1, ncol = 2)
+merge.km
+
+# weighted log-rank test
+## progression-free survival
+pfs_fit <- coxph(data = d_fixed, ttp ~ PPI.Concurrent, weight = wgt)
+pval_pfs <- round(summary(pfs_fit)$sctest[3], digits = 5)
+
+## overall survival
+os_fit <- coxph(data = d_fixed, ttd ~ PPI.Concurrent, weight = wgt)
+pval_os <- round(summary(os_fit)$sctest[3], digits = 5)
+
+pval_pfs
+pval_os
+
+# analysis for reviewer #1
+dh2 <- d_fixed %>% drop_na(H2.Concurrent)
+pfs_fit <- survival::survfit(data = dh2, Surv(TimeToProgression.iRECIST, Progression.iRECIST.Binary) ~ H2.Concurrent)
+pfs_km <- survminer::ggsurvplot(pfs_fit, 
+                                risk.table = FALSE, font.tickslab = 14, font.x = 14, font.y = 14,
+                                title = "Immune progression-free survival", 
+                                legend = "top", legend.labs = c("No", "Yes"), 
+                                legend.title = "H2 blocker use", censor = FALSE,
+                                xlab = "Time from treatment initiation, month", 
+                                ylab = "Immune progression-free survival probability",
+                                palette = "aaas", size = 0.6, 
+                                ggtheme = theme_classic()) 
+
+# overall survival
+os_fit <- survival::survfit(data = dh2, Surv(FollowUp, Deceased.Binary) ~ H2.Concurrent)
+os_km <- survminer::ggsurvplot(os_fit, 
+                               risk.table = FALSE, font.tickslab = 14, font.x = 14, font.y = 14,
+                               title = "Overall survival", 
+                               legend = "top", legend.labs = c("No", "Yes"), 
+                               legend.title = "H2 blocker use", censor = FALSE,
+                               xlab = "Time from treatment initiation, month", 
+                               ylab = "Overall survival probability",
+                               palette = "aaas", size = 0.6, 
+                               ggtheme = theme_classic()) 
+
+merge_km <- 
+  survminer::arrange_ggsurvplots(list(pfs_km, os_km), print = TRUE, 
+                                 nrow = 1, ncol = 2)
+merge_km
+
+```
+
+```{r Restricted mean survival time, include = FALSE}
+# calculate IPW-adjusted RMST using akm_rmst
+rmst_diff_os <- abs(akm_rmst_diff(time = d_fixed$FollowUp, 
+                                  status = d_fixed$Deceased.Binary, 
+                                  group = as.factor(d_fixed$PPI.Concurrent), weight = d_fixed$wgt, tau = 12.8)
+) %>% round(digits = 2)
+
+rmst_diff_pfs <- abs(akm_rmst_diff(time = d_fixed$TimeToProgression.iRECIST, 
+                                   status = d_fixed$Progression.iRECIST.Binary, 
+                                   group = as.factor(d_fixed$PPI.Concurrent), weight = d_fixed$wgt, tau = 12.8)
+) %>% round(digits = 2)
+
+rmst_abs_os <- abs(akm_rmst_abs(time = d_fixed$FollowUp, 
+                                status = d_fixed$Deceased.Binary, 
+                                group = as.factor(d_fixed$PPI.Concurrent), weight = d_fixed$wgt, tau = 12.8)
+) %>% round(digits = 2)
+
+rmst_abs_pfs <- abs(akm_rmst_abs(time = d_fixed$TimeToProgression.iRECIST, 
+                                 status = d_fixed$Progression.iRECIST.Binary, 
+                                 group = as.factor(d_fixed$PPI.Concurrent), weight = d_fixed$wgt, tau = 12.8)
+) %>% round(digits = 2)
+```
+
+```{r Treatment-related adverse event, include = FALSE}
+d_ae <- d_fixed %>% 
+  filter(irAE == "Yes") %>% 
+  select(irAE, AE.Detail, AE.Grade) %>% 
+  tbl_summary() %>% as_tibble()
+
+num.ae <- d_fixed %>% filter(irAE == "Yes") %>% count() %>% as.numeric()
+num.ae.ppi <- d_fixed %>% filter(irAE == "Yes", PPI.Concurrent == "Yes") %>% count() %>% as.numeric()
+num.ae.none <- d_fixed %>% filter(irAE == "Yes", PPI.Concurrent == "No") %>% count() %>% as.numeric()
+num.g3 <- d_fixed %>% filter(irAE == "Yes", irAE.Strata.Grade == "Grade 3-4") %>% count() %>% as.numeric()
+
+ae_vec <- d_fixed %>% filter(irAE == "Yes") %>% drop_na(AE.Detail) %>% pull(AE.Detail) # irAE vector
+count.hypo <- str_detect(ae_vec, pattern = "Hypothyroidism") %>% summary()
+num.hypo <- count.hypo[[3]] %>% as.numeric()
+
+irae.fisher <- fisher.test(d_fixed$PPI.Concurrent, d_fixed$irAE)
+irae.fisher.p <- irae.fisher[["p.value"]] %>% round(digits = 2) %>% as.numeric()
+
+```
+
+\newpage
+### ABSTRACT
+
+### Background
+
+The association of concurrent proton pump inhibitor (PPI) use with treatment outcome of metastatic urothelial carcinoma (UC) remains controversial.
+
+### Materials and Methods
+
+We retrospectively analyzed the records of `r d_fixed %>% count() %>% as.numeric()` patients with platinum-treated metastatic UC treated with pembrolizumab. The primary outcome was overall survival (OS). Immune progression-free survival (iPFS) and objective response per immune response evaluation criteria in solid tumors were also compared. Inverse probability of treatment weighting (IPTW)-adjusted multivariable Cox regression models and an IPTW-adjusted multivariable logistic regression model were used to evaluate the oncological outcomes. Furthermore, heterogeneity of the treatment effect on OS was examined using interaction terms within the IPTW-adjusted univariate Cox regression models.
+
+### Results
+
+Overall, `r ppi.pt` patients (`r perall(ppi.pt)`%) used PPIs. After weighting, no significant differences in patient characteristics were observed between PPI users and non-users. PPI use was significantly associated with a shorter OS (hazard ratio [HR]: `r hr(multi.os.hr)`, 95% confidence interval [CI]: `r ci(multi.os.hr)`, P = `r multi.os.p`) and iPFS (HR: `r hr(multi.pfs.hr)`, 95% CI: `r ci(multi.pfs.hr)`, P = `r multi.pfs.p`). Although not statistically significant, PPI use was associated with objective response as well (OR: `r hr(multi.or.or)`, 95% CI: `r ci(multi.or.or)`, P = `r multi.or.p`). The interaction analyses showed that the effect of PPI significantly decreased with age (HR: `r hr(age.os[6, 2])`, 95% CI: `r ci(age.os[6, 2])`, P[interaction] = `r age.os[6, 3] %>% as.numeric()`) and was increased in males (HR: `r hr(sex.os[8, 2])`, 95% CI: `r ci(sex.os[8, 2])`, P[interaction] = `r sex.os[8, 3]`).
+
+### Conclusions
+
+PPI use was significantly associated with worse survival of patients with metastatic UC treated with pembrolizumab. Furthermore, the results suggested that its effects decreased with age and was increased in males.
+
+### Keywords
+
+Immune checkpoint inhibitor; Immunotherapy; Pembrolizumab; Proton pump inhibitor; Urothelial carcinoma
+
+\newpage
+### MANUSCRIPT
+
+### 1. Introduction
+
+Metastatic urothelial carcinoma (UC) is a highly lethal disease, with an expected survival of 14-15 months in patients treated with platinum-based chemotherapy.[@vondermaase2005] In recent years, however, the emergence of immune checkpoint inhibitors (ICIs) significantly improved the prognosis of these patients. For example, the KEYNOTE-045 trial showed pembrolizumab, a humanized monoclonal antibody targeting the programmed cell death protein 1 (PD-1), improved overall survival of patients with advanced UC who had been treated with platinum-based chemotherapy.[@bellmunt2017] Within this class, anti-programmed death-ligand 1 antibodies such as atezolizumab, durvalumab, and avelumab were also used for the treatment of platinum-refractory advanced UC.[@mar2019] Although ICIs improve the clinical outcomes, their effectiveness in metastatic UC is often heterogeneous. Therefore, identifying novel prognostic factors for optimizing patient management remains a critical unmet need.
+
+Recent evidence suggests that the use of several concurrent medications is associated with worse clinical outcomes in cancer patients treated with ICIs.[@zhao2019; @chalabi2020; @pinato2019] In addition, data from the Checkmate 069 trial suggested that proton pump inhibitor (PPI) use could negatively impact on the benefit of anti-PD-1 therapy.[@homicsko2018] Similar results were observed in patients with locally advanced or metastatic UC treated with atezolizumab.[@hopkins2020] However, data on different types of cancer reported the controversial results.[@nguyen2019; @mukherjee2019] Given the heterogeneity of cancer types, patient characteristics, and treatments, [@homicsko2018; @nguyen2019; @mukherjee2019] it is still unclear whether this association is applicable to patients with metastatic UC treated with pembrolizumab.
+
+In this multicenter retrospective study, we aimed to evaluate the association between PPI use and clinical outcomes of patients with metastatic UC treated with pembrolizumab.
+
+### 2. Materials and Methods
+
+### 2.1. Patient selection and data collection
+
+After obtaining the institutional review board approvals, we retrospectively assessed the data on a total of `r d1 %>% count() %>% as.numeric()` consecutive patients with metastatic UC treated with pembrolizumab at least once in our institutions between April 2018 and April 2021. All the patients had histologically confirmed UC of the renal pelvis, ureter, or bladder, and were administered an intravenous infusion of 200mg of pembrolizumab therapy every three weeks. Finally, `r d_fixed %>% count() %>% as.numeric()` patients were analyzed, as `r d2 %>% filter(is.na(Best.Response)) %>% count() %>% as.numeric()` patients were excluded due to non-availability of data.
+
+All clinical data on covariates, including age, sex, Eastern Cooperative Oncology Group (ECOG) performance status, smoking history, body mass index (BMI), primary location of tumor, metastatic location, liver metastasis, number of prior chemotherapies, previous platinum therapy, baseline hemoglobin concentration, baseline neutrophil-to-lymphocyte ratio (NLR), baseline platelet count, concurrent use of glucocorticoid, previous use of antibiotics, and concurrent PPI use, were collected from electronic medical records. In addition, because PPIs are commonly used with analgesics, data regarding analgesic use was also collected. Laboratory data were collected within one month of the initial administration. Concurrent medications of PPI and analgesic was noted down if patients were prescribed these medications within a period of one month before and after the administration of pembrolizumab.[@hopkins2020; @chalabi2020] PPIs included esomeprazole, lansoprazole, rabeprazole. In addition, given its superior effectiveness and stability of gastric acid suppression compared with PPI,[@abdel-aziz2021] this study considered the users of potassium-competitive acid blocker (PCAB) as PPI users. PCAB included vonoprazan. Analgesics included acetaminophen, loxoprofen, celecoxib, diclofenac, hydromorphone, and oxycodone. Because non-steroidal anti-inflammatory drug and acetaminophen use is shown to be associated with gastrointestinal ulcers, which might affect the decision of PPI use, opioid and the other analgesics (non-steroidal anti-inflammatory drug and acetaminophen) were evaluated separately. Previous use of antibiotics was also recorded if patients received antibiotics within one month before treatment with pembrolizumab.[@chalabi2020; @pinato2019]
+
+### 2.2. Assessment
+
+The baseline date was set as the date of initiation of pembrolizumab treatment. The outcomes studied were overall survival (OS) and immune progression-free survival (iPFS). OS was defined from the baseline date to the date of all-cause mortality, and iPFS was defined as the time from the initiation of pembrolizumab to the date of immune progression or death from any cause, whichever occurred first. Immune progression was evaluated using Immunotherapy Response Evaluation Criteria in Solid Tumors (iRECIST) to minimize the effect of pseudo-progression on the analysis.[@seymour2017] In this study, immune progression was defined as the sum of immune unconfirmed-progressive disease and immune confirmed-progressive disease per iRECIST. Pseudo-progression was defined as a treatment response according to RECIST (partial response and complete response) after radiographic progression.[@borcoman2018] For patients who did not have any such event, the follow-up was censored at the last disease evaluation. Computed tomography and/or magnetic resonance imaging of the chest, abdomen, and pelvis were generally performed every 6 weeks, or if clinically indicated during the follow-up.
+
+In addition, we also studied the association between PPI use and the incidence of treatment-related adverse events (trAEs). All trAEs were evaluated after treatment initiation. trAEs were defined according to the previous studies as immunologically driven adverse events that require immunosuppressive or endocrine intervention.[@brahmer2015; @borghaei2015] The clinical severity of trAE was graded on the basis of the Common Terminology Criteria for Adverse Events, version 4.0.
+
+### 2.3. Data analysis
+
+Descriptive statistics were used to summarize patient characteristics. To account for the selection bias, observed differences in patient characteristics between PPI users and non-users were balanced with inverse probability treatment weighting (IPTW)-adjusted analysis. Propensity score used for IPTW-adjusted analysis was calculated using the multivariable logistic regression model for all the covariates described previously. Because of the skewed distribution of raw biomarker data, a natural logarithmic transformation was applied to the baseline NLR and baseline platelet count to achieve a more normal distribution before inclusion in the models. Covariate balance was assessed using a standardized difference approach and Kernel density plots, and the imbalance was defined as a mean standardized difference (SMD) of >10%.[@austin2009] The between-group difference in the incidence of trAEs according to PPI use was assessed using Fisher's exact test. Multivariable logistic regression models were fitted to evaluate the association of PPI use and ORR with patient characteristics. The results are described as odds ratios (ORs) and 95% confidence intervals (CIs). Survival distribution was assessed using the IPTW-adjusted Kaplan-Meier method and compared using log-rank test. Furthermore, multivariable Cox regression models were fitted to compute the corresponding hazard ratios (HRs) and 95% CIs. Unweighted multivariable Cox regression analyses were performed as well to assess the impact of the use of two respective drugs on the effectiveness of pembrolizumab.
+
+In addition, because HR does not clearly indicate the absolute magnitude of the treatment effect,[@kloecker2020] the difference in restricted mean survival time (RMST) adjusted by IPTW was applied to quantify an absolute clinical differences according to PPI use on time-to-event outcomes.[@uno2014] The RMST is the area under the IPTW-adjusted Kaplan-Meier curve until time T, in other words, is the average time-to-event over a fixed follow-up period.[@royston2013] In this study, time T was set at the median follow-up time (`r median.fu` months).
+
+Further, we examined the heterogeneity of the effects of PPIs by testing interaction terms within the IPTW-adjusted univariate Cox regression models.
+
+All analyses were two-sided, with a significance threshold of P = 0.05, and were performed using R software, version 4.1.2, with R studio, version 1.4.1103.
+
+### 3. Results
+
+### 3.1. Patient characteristics
+
+A total of `r all.pt` patients with metastatic UC treated with pembrolizumab were included. Median follow-up period of unweighted population was `r median.fu` months (95% CI: `r lcl.fu` to `r ucl.fu`). During the follow-up, on unweighted population, `r event.PFS` (`r perall(event.PFS)`%) and `r event.OS` (`r perall(event.OS)`%) patients experienced immune progression and expired, respectively. Unweighted and weighted patient characteristics of the study patients, stratified by PPI use, are shown in Table 1. Of the `r all.pt` patients, `r ppi.pt` (`r perall(ppi.pt)`%) received concomitant PPIs, and all the users used it for gastric and duodenal ulcer prophylaxis. A majority of the patients were taking vonoprazan (`r ppi_table[6, 2] %>% as.vector()`%) (Supplemental Table 1). All patients had received at least one platinum therapy (Table 1). Multivariable logistic regression model evaluating the association between PPI use and patient characteristics showed that the other analgesic use was significantly associated with PPI use (OR: `r hr(log[37, 2])`, 95% CI: `r ci(log[37, 2])`, P = `r log[37, 3]`) (Supplemental Table 2).
+
+SMDs of the unweighted study population indicated that the difference in baseline characteristics between the groups was significant (Table 1). IPTW adjustment achieved adequate balance in patient characteristics (Table 1 and Supplemental Figure 1).
+
+### 3.2. Association of PPI use with treatment response
+
+A summary of the best overall response in the unweighted population is shown in Supplemental Figure 2. Overall, `r pts.or` patients (`r perall(pts.or)`%) experienced an objective response. `r atyp.res` (`r perall(atyp.res)`%) patients experienced pseudo-progression; however, the difference in its proportion was not significant (PPI users, `r atyp.ppi` / `r ppi.pt` [`r perppi(atyp.ppi)`%] vs. non-users, `r atyp.none` / `r none.pt` [`r pernone(atyp.none)`%]; P = `r atyp.p`). A multivariable logistic regression model also showed that PPI use was associated with lower OR of objective response (OR: `r hr(multi.or.or)`, 95% CI: `r ci(multi.or.or)`, P = `r multi.or.p`) although not statistically significant (Supplemental Table 3). This model also identified previous antibiotic use as a significant prognostic factor of ORR (OR: `r hr(multi.or.or.ab)`, 95% CI: `r ci(multi.or.or.ab)`, P = `r multi.or.p.ab`).
+
+### 3.3. Association of PPI use with survival
+
+The median iPFS and OS of unweighted population were `r median.PFS` months and `r median.OS` months, respectively. PPI use was significantly associated with both worse iPFS (median, `r median.pfs.ppi` vs `r median.pfs.none` months, P = `r pval_pfs`) and worse OS (median, `r median.os.ppi` vs `r median.os.none` months, P = `r pval_os`) (Figure 1). In addition, multivariable Cox regression models showed that PPI use was independently associated with a higher hazard ratio of immune progression (HR: `r hr(multi.pfs.hr)`, 95% CI: `r ci(multi.pfs.hr)`, P = `r multi.pfs.p`) and all-cause mortality (HR: `r hr(multi.os.hr)`, 95% CI: `r ci(multi.os.hr)`, P = `r multi.os.p`) (Tables 2 and Table 3). These models also identified concomitant glucocorticoid use as a significant prognostic factor for immune progression (HR: `r hr(multi.pfs.hr.gc)`, 95% CI: `r ci(multi.pfs.hr.gc)`, P = `r multi.pfs.p.gc`). To assess the impact of the different drug class on the survival of the study population (vonoprazan or the others), we performed additional multivariable Cox regression analyses. They showed that the use of both drugs were associated with the higher hazard of all-cause mortality (PPI; HR: `r hr(multi_os_hr_ppi)`, 95% CI: `r ci(multi_os_hr_ppi)`; P = `r multi_os_p_ppi`, PCAB; HR: `r hr(multi_os_hr_pcab)`, 95% CI: `r ci(multi_os_hr_pcab)`; P = `r multi_os_p_pcab`) and immune progression (PPI; HR: `r hr(multi_pfs_hr_ppi)`, 95% CI: `r ci(multi_pfs_hr_ppi)`; P = `r multi_pfs_p_ppi`, PCAB; HR: `r hr(multi_pfs_hr_pcab)`, 95% CI: `r ci(multi_pfs_hr_pcab)`; P = `r multi_pfs_p_pcab`) (Supplemental Table 4 and Supplemental Table 5). 
+
+Next, the IPTW-adjusted RMST analysis, which was performed to to better understand the clinical magnitude of treatment effect of PPI use, indicated that across the median follow-up time (`r median.fu` months), PPI users survived for `r rmst_abs_os[2, 1]` months and did not show immune progression for `r rmst_abs_pfs[2, 1]` months on average. The corresponding IPTW-adjusted RMSTs for non-users were `r rmst_abs_os[1, 1]` and `r rmst_abs_pfs[1, 1]` months, respectively. Moreover, the differences of `r rmst_diff_os[1, 1]` months (95% CI: `r rmst_diff_os[1, 4]` to `r rmst_diff_os[1, 3]`, P = `r rmst_diff_os[1, 5]`) in OS and `r rmst_diff_pfs[1, 1]` months (95% CI: `r rmst_diff_pfs[1, 4]` to `r rmst_diff_pfs[1, 3]`, P = `r rmst_diff_pfs[1, 5]`) in iPFS between the two groups were significant.
+
+Finally, the heterogeneity of the effects of PPI use on OS was evaluated by testing interaction terms within the univariate Cox regression models. Interaction analyses indicated that the effects of PPIs was significantly decreased with age (HR per one year increase in age: `r hr(age.os[6, 2])`, 95% CI: `r ci(age.os[6, 2])`, P[interaction] = `r age.os[6, 3]`) and were increased in males (HR: `r hr(sex.os[8, 2])`, 95% CI: `r ci(sex.os[8, 2])`, P[interaction] = `r sex.os[8, 3]`), whereas no significant interaction was observed with the following variables: performance status (P[interaction] = `r ps.os[8, 3]`), smoking status (P[interaction] = `r smoking.os[8, 3]`), BMI (P[interaction] = `r bmi.os[6, 3]`), primary location of tumor (P[interaction] = `r pri.os[8, 3]`), metastatic location (lymph node [LN] only vs. visceral metastasis; P[interaction] = `r met.os[9, 3]`, LN only vs. LN and visceral metastasis; P[interaction] = `r met.os[10, 3]`), number of previous chemotherapies (P[interaction] = `r num.os[8, 3]`), concomitant glucocorticoid use (P[interaction] = `r gc.os[8, 3]`), concomitant analgesic use (none vs. opioid; P[interaction] = `r ana.os[9, 3]`, none vs. the other analgesics; P[interaction] = `r ana.os[10, 3]`), and previous antibiotic use (P[interaction] = `r ab.os[8, 3]`).
+
+### 3.4. Association of PPI use with treatment-related adverse events
+
+Overall, `r num.ae` patients (`r perall(num.ae)`%) experienced 48 trAEs. A summary of trAEs is shown in Supplemental Table 6. `r num.g3` patients (`r perae(num.g3)`%) developed the trAEs with grade 3 or more, and the most common trAE was hypothyroidism (`r num.hypo` [`r perae(num.hypo)`%]). The association between PPI use and the incidence of trAE was not statistically significant (PPI users, `r num.ae.ppi` [`r perppi(num.ae.ppi)`%] vs. non-users, `r num.ae.none` [`r pernone(num.ae.none)`%]; Fisher exact test, P = `r irae.fisher.p`).
+
+### 4. Discussion
+
+In this study, the results showed that PPI use was associated with worse outcomes of patients with metastatic UC treated with pembrolizumab. On average, PPI users survived `r rmst_diff_os[1, 1]`-month shorter in OS and `r rmst_diff_pfs[1, 1]`-month shorter in iPFS than non-users. This real world data from multi-institution support previous studies demonstrating the negative impact of PPI in cancers treated with ICIs in clinical trial settings.[@chalabi2020; @homicsko2018; @hopkins2020] Thus, our data suggested that the association between PPI use and the effectiveness of ICI could apply to the broader range of cancer patients. Importantly, our study demonstrated that the effects of PPIs on survival of these patients decreased significantly with age and increased in males. A previous meta-analysis from the data of randomized clinical trials of ICIs suggested that male patients benefited more from ICIs than female patients.[@conforti2019] Although the authors suggested that the possible effect of sex-related hormone on PD-1 pathway as a rationale of their findings, the use of concomitant drug such as PPI might be a possible confounding of the study results. On the other hand, the results showed that concomitant glucocorticoid use and previous antibiotic use were significantly associated with the hazard ratio of immune progression and objective response, respectively. Although our data did not show the association between the use of these drugs and the other oncological outcomes, limited number of glucocorticoid users and the timing of previous antibiotic use may affect the results.[@pinato2019]
+
+In contrast to these results, the association between PPI use and incidence of trAEs was not statistically significant. The proportion of patients using PPIs in our study was comparable to that in other studies.[@hopkins2020; @chalabi2020] Notably, in contrast to the concomitant glucocorticoid, our study showed that PPI users were more likely to take non-steroidal anti-inflammatory drug and acetaminophen concomitantly. Because their use indicates that a patient is symptomatic, which may be a significant confounder for survival of cancer patients,[@mantyh2006] as discussed elsewhere,[@fukuokaya2021] the presence of concomitant drugs should be considered in studies investigating the association of concomitant medications with survival of cancer patients.
+
+Recent evidence suggests that the alteration of gut microbiota composition is associated with obesity, metabolic diseases, inflammatory diseases, aging, and immunity.[@valdes2018] Furthermore, the data of melanoma patients receiving anti-PD-1 therapy recently showed significant differences in the diversity and composition of the patient gastrointestinal microbiome between treatment responders and non-responders.[@matson2018] Notably, they also found a relative abundance of certain bacteria including Bifidobacteriaceae in fecal microbiome samples of responding patients. Furthermore, a mechanistic study showed that treatment with specific Bifidobacterium bifidum reduced tumor burden synergistically with anti-PD-1 therapy in mouse model of lung cancer through tuning of the immunological background by potentiating the production of interferon-gamma.[@lee2021] Meanwhile, it has been shown that several medications including PPIs may affect the gastrointestinal microbiome. Association between PPI use and the gastrointestinal microbiome of 1815 individuals showed a significant decrease in bacterial richness and certain bacteria including the Bifidobacteriaceae and the Ruminococcaceae families, and a significant increase in pathogenic bacteria in PPI users than in non-users.[@imhann2016; @reveles2018] Our data suggests that the effect of PPI on the effectiveness of pembrolizumab significantly reduced with age and increased in males. Given that the abundance of Bifidobacterium species is associated with both age and sex,[@kurilshikov2021; @kim2020] collectively, these evidences also support the possible association between PPI use, effectiveness of ICI, and the changes in gut microbiota. Further research is warranted to elucidate the potential role of PPIs in the gastrointestinal microbiome of patients with metastatic UC treated with pembrolizumab.
+
+The results should be interpreted within the limitation of the observational study. First, although IPTW-adjusted analysis was completely balanced baseline patient characteristics, unmeasured confounders such as the degree of baseline symptoms, comorbidity, tumor mutational burden, fibroblast growth factor receptor mutation status, and tissue PD-L1 status may have affected our findings. Also, the surveillance schedule could not be completely standardized, and the duration of PPI exposure, and types and doses of PPI were not considered in this study. The other symptomatic treatment such as anti-emetic could not considered in this study. Finally, the IPTW-adjusted RMST analysis with a longer time window is required to assess the robustness of our findings.
+
+Despite these limitations, our data indicated that PPI use was associated with shorter OS and iPFS in patients with metastatic UC treated with pembrolizumab therapy.
+
+### 5. Conclusions
+
+This study suggests that PPI use is associated with worse survival in patients with metastatic UC receiving pembrolizumab therapy and indicated that the association between PPI use and OS decreases with age and is increased in males.
+
+### 6. Funding
+
+None
+
+### 7. Disclosure of competing interests
+
+Shin Egawa is a paid consultant/advisor to Takeda, Astellas, AstraZeneca, Sanofi, Janssen, and Pfizer. The other authors declare no conflict of interest associated with this manuscript.
